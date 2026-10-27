@@ -1,0 +1,9 @@
+Clasifica la intención del siguiente mensaje de un usuario de SismoWatch, una plataforma de monitoreo sísmico. Responde con SOLO UNA de estas tres palabras, sin explicación:
+
+SALUDO - si es un saludo o cortesía (hola, buenos días, gracias, cómo estás, etc.)
+FUERA_DE_TEMA - si pregunta algo que no tiene nada que ver con sismos, terremotos o los datos de esta plataforma
+DATOS - si pregunta algo sobre sismos, magnitudes, eventos, regiones, fechas o cualquier dato que esta plataforma podría responder
+
+Mensaje: {question}
+
+Responde solo con SALUDO, FUERA_DE_TEMA o DATOS.

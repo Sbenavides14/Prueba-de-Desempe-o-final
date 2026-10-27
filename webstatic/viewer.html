@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SismoWatch — Viewer</title>
+  <link rel="stylesheet" href="css/style.css" />
+  <script src="https://unpkg.com/globe.gl"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="dot"></span>SismoWatch</div>
+      <nav>
+        <a data-view="view-dashboard" class="active" onclick="switchView('view-dashboard', this)"></a>
+        <a data-view="view-reports" onclick="switchView('view-reports', this)"></a>
+        <a data-view="view-pipeline" onclick="switchView('view-pipeline', this)"></a>
+        <a data-view="view-chat" onclick="switchView('view-chat', this)"></a>
+      </nav>
+      <div class="user-box">
+        <div class="who"><span class="email" id="sidebar-email"></span><span class="role">viewer</span></div>
+        <button class="secondary" onclick="doLogout()" title="Salir"></button>
+      </div>
+    </aside>
+
+    <div class="main-area">
+      <!-- ===== Dashboard ===== -->
+      <div id="view-dashboard" class="view active">
+        <div class="page">
+          <div class="page-header">
+            <h1>Dashboard</h1>
+            <p class="page-desc">Panorama general de la actividad sísmica monitoreada.</p>
+          </div>
+
+          <div class="live-badge">
+            <span id="live-dot" class="live-dot off"></span>
+            <span id="live-label">Conectando...</span>
+            <span id="live-updated"></span>
+          </div>
+
+          <div id="kpis" class="grid"></div>
+
+          <div class="section">
+            <div class="section-head"><h2 id="h-globe"></h2></div>
+            <p class="section-desc">Mapa 3D interactivo: haz clic y arrastra para rotar. El tamaño y color del punto indican la magnitud.</p>
+            <div class="globe-card">
+              <div id="globeViz"></div>
+              <div class="globe-legend">
+                <span><span class="dot" style="background:#2a78d6"></span>Magnitud &lt; 3</span>
+                <span><span class="dot" style="background:#eda100"></span>Magnitud 3–5</span>
+                <span><span class="dot" style="background:#e34948"></span>Magnitud 5+</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-head"><h2>Últimos eventos</h2></div>
+            <div id="event-cards" class="event-cards"></div>
+          </div>
+
+          <div class="section">
+            <div class="section-head"><h2 id="h-charts"></h2></div>
+            <div class="grid">
+              <div style="flex-basis:400px" id="chart-timeseries"></div>
+              <div style="flex-basis:300px" id="chart-magnitude"></div>
+              <div style="flex-basis:300px" id="chart-regions"></div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-head"><h2 id="h-filter"></h2></div>
+            <div class="filters-bar">
+              <label>Desde<input id="filter-start" type="date" /></label>
+              <label>Hasta<input id="filter-end" type="date" /></label>
+              <label>Magnitud mínima<input id="filter-mag" type="number" step="0.1" style="width:90px" /></label>
+              <label>Región<input id="filter-region" type="text" placeholder="ej. Alaska" /></label>
+              <button id="apply-filters">Aplicar filtros</button>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-head"><h2>Tabla de eventos</h2></div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Hora</th><th>Lugar</th><th>Magnitud</th><th>Tsunami</th></tr></thead>
+                <tbody id="events-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Reportes ===== -->
+      <div id="view-reports" class="view">
+        <div class="page">
+          <div class="page-header">
+            <h1 id="h-reports-title"></h1>
+            <p class="page-desc">Resúmenes narrativos generados automáticamente, con las cifras exactas que los respaldan.</p>
+          </div>
+          <div class="section-head"><h2 id="h-reports-filter"></h2></div>
+          <div class="filters-bar">
+            <label>Desde<input id="report-filter-start" type="date" /></label>
+            <label>Hasta<input id="report-filter-end" type="date" /></label>
+            <button id="apply-report-filters">Aplicar</button>
+            <span style="margin-left:auto;display:flex;gap:8px">
+              <a id="export-csv" href="#"><button class="secondary" id="btn-export-csv"></button></a>
+              <a id="export-pdf" href="#"><button class="secondary" id="btn-export-pdf"></button></a>
+            </span>
+          </div>
+          <div id="reports-list"></div>
+          <div id="reports-pager" style="display:flex;justify-content:center;gap:12px;align-items:center;margin-top:16px"></div>
+        </div>
+      </div>
+
+      <!-- ===== Pipeline (resumen, sin acciones de admin) ===== -->
+      <div id="view-pipeline" class="view">
+        <div class="page">
+          <div class="page-header">
+            <h1 id="h-pipeline-title"></h1>
+            <p class="page-desc">Qué está corriendo mi orquestación y con qué resultado.</p>
+          </div>
+          <div class="section">
+            <div class="section-head"><h2 id="h-pipeline-runs"></h2></div>
+            <p class="section-desc">Resultado de las ejecuciones más recientes de mis 4 flujos de Airflow.</p>
+            <div id="pipeline-runs"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Chat ===== -->
+      <div id="view-chat" class="view">
+        <div class="page">
+          <div class="page-header">
+            <h1 id="h-chat-title"></h1>
+            <p class="page-desc">No soy un chat general: solo respondo preguntas sobre tus datos sísmicos (magnitudes, conteos, regiones, fechas).</p>
+          </div>
+          <form id="chat-form" class="filters-bar">
+            <input id="chat-input" placeholder="Ej: ¿Cuántos eventos tuvieron magnitud mayor a 5 esta semana?" style="flex:1 1 400px" />
+            <button id="chat-submit" type="submit">Preguntar</button>
+          </form>
+          <p id="chat-error" class="error-message" style="display:none"></p>
+          <div id="chat-messages"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/globe.js"></script>
+  <script src="js/app.js"></script>
+  <script>
+    const session = requireAuth();
+    if (session) {
+      document.getElementById("sidebar-email").textContent = session.email;
+
+      // Relleno los textos con icono que necesitan JS (evito duplicar HTML/SVG a mano).
+      document.querySelectorAll("nav a")[0].innerHTML = Icons.dashboard() + "Dashboard";
+      document.querySelectorAll("nav a")[1].innerHTML = Icons.reports() + "Reportes";
+      document.querySelectorAll("nav a")[2].innerHTML = Icons.pipeline() + "Pipeline";
+      document.querySelectorAll("nav a")[3].innerHTML = Icons.chat() + "Chat de datos";
+      document.querySelector(".user-box button").innerHTML = Icons.logout(16);
+      document.getElementById("h-globe").innerHTML = Icons.globe(16) + " Mapa 3D de eventos";
+      document.getElementById("h-charts").innerHTML = Icons.chart(16) + " Gráficos";
+      document.getElementById("h-filter").innerHTML = Icons.filter(16) + " Filtrar eventos";
+      document.getElementById("h-reports-title").innerHTML = Icons.reports(24) + " Reportes diarios de IA";
+      document.getElementById("h-reports-filter").innerHTML = Icons.filter(16) + " Filtrar por fecha";
+      document.getElementById("btn-export-csv").innerHTML = Icons.download(16) + " Exportar CSV";
+      document.getElementById("btn-export-pdf").innerHTML = Icons.download(16) + " Exportar PDF";
+      document.getElementById("h-pipeline-title").innerHTML = Icons.pipeline(24) + " Estado del pipeline";
+      document.getElementById("h-pipeline-runs").innerHTML = Icons.pipeline(16) + " Últimas corridas";
+      document.getElementById("h-chat-title").innerHTML = Icons.chat(24) + " Pregúntale a tus datos";
+
+      initGlobe("globeViz", (d) => alert(`${d.place}\nMagnitud: ${d.mag}\n${new Date(d.event_time).toLocaleString()}`));
+      loadKpis();
+      loadEvents();
+      loadCharts();
+      initFilters();
+      initLiveStream();
+      loadReports(1);
+      initReportFilters();
+      loadPipelineStatus();
+      initChat();
+    }
+
+    function switchView(viewId, link) {
+      document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+      document.getElementById(viewId).classList.add("active");
+      document.querySelectorAll("nav a").forEach((a) => a.classList.remove("active"));
+      link.classList.add("active");
+    }
+  </script>
+</body>
+</html>

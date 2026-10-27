@@ -1,0 +1,23 @@
+# Nunca subo mis secretos reales.
+.env
+*.env
+!.env.example
+
+# Dependencias y entornos locales.
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Datos y logs que genero al correr el proyecto.
+airflow/logs/
+postgres_data/
+
+# Archivos propios del editor y del sistema.
+.DS_Store
+.vscode/
+.claude/
+
+# Notas de contexto para IA, solo para uso local, no para el repositorio.
+AGENTS.md

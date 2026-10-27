@@ -1,0 +1,186 @@
+x-airflow-common: &airflow-common
+  build:
+    context: ./airflow
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    # Habilito autenticación básica en la API REST de Airflow: por defecto solo
+    # acepta la sesión del navegador, y mi api necesita llamarla con usuario/clave.
+    AIRFLOW__API__AUTH_BACKENDS: airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+    PYTHONPATH: /opt/airflow
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER}:${AIRFLOW_DB_PASSWORD}@host.docker.internal:15433/${APP_DB_NAME}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_WEBSERVER_SECRET_KEY}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    APP_DB_HOST: host.docker.internal
+    APP_DB_PORT: 15433
+    APP_DB_NAME: ${APP_DB_NAME}
+    INGESTOR_DB_USER: ${INGESTOR_DB_USER}
+    INGESTOR_DB_PASSWORD: ${INGESTOR_DB_PASSWORD}
+    TRANSFORMER_DB_USER: ${TRANSFORMER_DB_USER}
+    TRANSFORMER_DB_PASSWORD: ${TRANSFORMER_DB_PASSWORD}
+    OLLAMA_HOST: http://host.docker.internal:11434
+    OLLAMA_MODEL: ${OLLAMA_MODEL}
+    ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL}
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/include:/opt/airflow/include
+    - ./airflow/tests:/opt/airflow/tests
+    - ./airflow/pytest.ini:/opt/airflow/pytest.ini
+    - airflow_logs:/opt/airflow/logs
+  sysctls:
+    # Mismo fix que en mi servicio de IA: sin esto, mis tareas fallan con
+    # "Network is unreachable" al intentar salir a internet por IPv6.
+    - net.ipv6.conf.all.disable_ipv6=1
+  # Uso la red "bridge" por defecto de Docker, no una red personalizada: en esta
+  # máquina, las redes personalizadas que crea docker compose tienen las reglas
+  # de NAT rotas y no logran salir a internet. La red default sí funciona siempre.
+  network_mode: bridge
+  extra_hosts:
+    # En este entorno, el tráfico contenedor-a-contenedor por la red interna de Docker
+    # está roto (reglas nftables mal configuradas). Hablo con todo a través del puerto
+    # publicado en el host, que sí funciona de forma confiable.
+    - "host.docker.internal:host-gateway"
+  depends_on:
+    pgdb2:
+      condition: service_healthy
+
+services:
+
+  # Guardo aquí mis esquemas raw/staging/curated/app y la metadata interna de Airflow.
+  # Nota: este servicio se llama "pgdb" (no "postgres") porque un contenedor viejo con
+  # ese nombre quedó huérfano en esta máquina y nunca se pudo detener ni liberar su puerto;
+  # así evito que mi stack choque con él.
+  pgdb2:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_SUPERUSER}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_DB: ${APP_DB_NAME}
+      AIRFLOW_DB_USER: ${AIRFLOW_DB_USER}
+      AIRFLOW_DB_PASSWORD: ${AIRFLOW_DB_PASSWORD}
+      INGESTOR_DB_USER: ${INGESTOR_DB_USER}
+      INGESTOR_DB_PASSWORD: ${INGESTOR_DB_PASSWORD}
+      TRANSFORMER_DB_USER: ${TRANSFORMER_DB_USER}
+      TRANSFORMER_DB_PASSWORD: ${TRANSFORMER_DB_PASSWORD}
+      READER_DB_USER: ${READER_DB_USER}
+      READER_DB_PASSWORD: ${READER_DB_PASSWORD}
+    volumes:
+      - pgdb2_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    ports:
+      - "15433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPERUSER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Levanto aquí mi modelo de IA local (Llama 3.1 8B), así no dependo de instalar nada aparte.
+  ollama:
+    image: ollama/ollama:latest
+    # Desactivo IPv6 aquí porque el cliente HTTP de Go intenta IPv6 primero y en esta
+    # red se cuelga sin responder, en vez de fallar rápido y caer a IPv4.
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    healthcheck:
+      # Uso el propio binario de ollama en vez de curl: la imagen oficial no trae curl instalado.
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Preparo Airflow una sola vez: creo sus tablas internas y mi usuario admin, luego me apago.
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - airflow db migrate && airflow users create --username ${AIRFLOW_ADMIN_USER} --password ${AIRFLOW_ADMIN_PASSWORD} --firstname Admin --lastname Admin --role Admin --email ${AIRFLOW_ADMIN_EMAIL}
+
+  # Aquí expongo la interfaz web de Airflow para ver y disparar mis DAGs.
+  airflow-web:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Soy el motor que decide cuándo disparar cada tarea de mis DAGs.
+  airflow-sched:
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Soy el backend: la única pieza a la que dejo leer curated.
+  api16:
+    build:
+      context: ./api
+    environment:
+      APP_DB_HOST: host.docker.internal
+      APP_DB_PORT: 15433
+      APP_DB_NAME: ${APP_DB_NAME}
+      READER_DB_USER: ${READER_DB_USER}
+      READER_DB_PASSWORD: ${READER_DB_PASSWORD}
+      TRANSFORMER_DB_USER: ${TRANSFORMER_DB_USER}
+      TRANSFORMER_DB_PASSWORD: ${TRANSFORMER_DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
+      APP_ADMIN_EMAIL: ${APP_ADMIN_EMAIL}
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL}
+      AIRFLOW_API_URL: http://host.docker.internal:8080
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_ADMIN_USER}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      OLLAMA_HOST: http://host.docker.internal:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      CORS_ORIGIN: http://localhost:3020
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8016:8000"
+    depends_on:
+      pgdb2:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  # Soy el dashboard que ve el equipo; hablo solo con la api, nunca con la base de datos.
+  web15:
+    build:
+      context: ./web
+      args:
+        VITE_API_URL: http://localhost:8015
+    ports:
+      - "3015:3000"
+    depends_on:
+      - api16
+    restart: unless-stopped
+
+  # Mi frontend definitivo: HTML/CSS/JS puro, sin framework ni paso de build.
+  # Monto el proyecto como volumen: editar un archivo aquí aplica con solo
+  # recargar el navegador, nunca necesito reconstruir este contenedor.
+  webstatic:
+    build:
+      context: ./webstatic
+    volumes:
+      - ./webstatic:/usr/share/nginx/html
+    ports:
+      - "3020:80"
+    restart: unless-stopped
+
+volumes:
+  pgdb2_data:
+  airflow_logs:
+  ollama_data:

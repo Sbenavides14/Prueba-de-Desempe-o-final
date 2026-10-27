@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>SismoWatch</title>
+  <script>
+    const role = localStorage.getItem("role");
+    if (role === "admin") window.location.replace("admin.html");
+    else if (role === "viewer") window.location.replace("viewer.html");
+    else window.location.replace("login.html");
+  </script>
+</head>
+<body></body>
+</html>
